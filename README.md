@@ -1,12 +1,36 @@
-# React + Vite
+# Stok Takip Frontend (React + Vite)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+FLO temasına (turuncu/beyaz) yakın, modern bir **stok takip** arayüzü.  
+Dashboard, kritik stok uyarıları, kategori bazlı grafik, ürün listesi/arama/filtre ve **Ürün Ekle** modallı hızlı iş akışları içerir. Envanter değeri **maliyet esaslı** hesaplanır.
 
-Currently, two official plugins are available:
+## ✨ Özellikler
+- **Dashboard**: Toplam ürün, toplam stok, düşük/kritik stok, toplam değer
+- **Anlık Uyarılar**: `stok = 0` ve `stok ≤ ROP` ürünler
+- **Grafik**: Kategori bazlı Stok / İhtiyaç (Recharts)
+- **Arama & Filtre**: SKU/Ad/Kategori/Lokasyon + “Sadece kritik stok”
+- **Ürün Ekle**: Modal form, doğrulama, benzersiz SKU üretimi
+- **CSV Dışa Aktar**
+- **Tema**: FLO turuncusu (`#ff6a00`) ve sade kart tasarımları
+- **Mock veri**: Hızlı demo için örnek ürünler
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## 🧱 Teknoloji
+- **React 18** + **Vite**
+- **Recharts**, **Lucide Icons**, **Framer Motion** (hazır; kullanım opsiyonel)
+- Saf CSS (Tailwind yok), değişken tabanlı tema
 
-## Expanding the ESLint configuration
+## 🚀 Başlangıç
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+> Gereksinim: Node.js 18+
+
+```bash
+# bağımlılıklar
+npm install
+
+# geliştirme (5173 portunda sabit)
+npm run dev
+
+# üretim derlemesi
+npm run build
+
+# build edilmişi önizleme (5173)
+npm run preview
