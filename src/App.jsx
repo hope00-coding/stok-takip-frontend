@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import { motion } from "framer-motion"; 
 import {
@@ -30,6 +30,8 @@ import {
   X,
 } from "lucide-react";
 
+import { listProducts, createProduct, deleteProduct, patchProductStock } from "./api/products.js";
+
 // Basit Modal bileşeni
 function Modal({ title, open, onClose, children, footer }) {
   if (!open) return null;
@@ -50,285 +52,305 @@ function Modal({ title, open, onClose, children, footer }) {
   );
 }
 
-// Basit UI bileşenleri (CSS ile stillenir)
-function Button({ className = "", variant = "default", children, ...props }) {
+// Card bileşenleri
+function Card({ children, className = "" }) {
   return (
-    <button className={`btn ${variant ? `btn--${variant}` : ""} ${className}`} {...props}>
+    <motion.div
+      whileHover={{ y: -2 }}
+      className={`card ${className}`}
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+function CardHeader({ title, children }) {
+  return (
+    <div className="card__header">
+      <div className="card__title">{title}</div>
+      {children && <div className="card__actions">{children}</div>}
+    </div>
+  );
+}
+
+// Button bileşeni
+function Button({ children, variant = "primary", size = "md", onClick, className = "", disabled, ...props }) {
+  const baseClass = "btn";
+  const variantClass = `btn--${variant}`;
+  const sizeClass = `btn--${size}`;
+  
+  return (
+    <button
+      className={`${baseClass} ${variantClass} ${sizeClass} ${className}`}
+      onClick={onClick}
+      disabled={disabled}
+      {...props}
+    >
       {children}
     </button>
   );
 }
 
-function Card({ className = "", children }) {
-  return <div className={`card ${className}`}>{children}</div>;
-}
-
-function CardHeader({ title, right }) {
-  return (
-    <div className="card__header">
-      <div className="card__title">{title}</div>
-      <div>{right}</div>
-    </div>
-  );
-}
-
-function Stat({ icon: Icon, label, value, sub }) {
-  return (
-    <div className="stat">
-      <div className="stat__icon"><Icon className="icon" /></div>
-      <div className="stat__body">
-        <div className="stat__label">{label}</div>
-        <div className="stat__value">{value}</div>
-        {sub && <div className="stat__sub">{sub}</div>}
-      </div>
-    </div>
-  );
-}
-
-// --- MOCK DATA ---
-const MOCK_ITEMS = [
-  { id: "SKU-1001", name: "Kadın Sneaker",        category: "Ayakkabı",     stock: 42, reorderPoint: 20, location: "Depo-1", incoming: 50, price: 1299, cost: 850 },
-  { id: "SKU-1002", name: "Omuz Çantası - Deri",  category: "Omuz Çantası", stock: 12, reorderPoint: 25, location: "Depo-2", incoming: 0,  price: 899,  cost: 520 },
-  { id: "SKU-1003", name: "Okul Çantası 30L",     category: "Okul Çantası", stock: 0,  reorderPoint: 15, location: "Depo-1", incoming: 80, price: 749,  cost: 430 },
-  { id: "SKU-1004", name: "Erkek Eşofman Altı",   category: "Eşofman",      stock: 18, reorderPoint: 12, location: "Depo-3", incoming: 0,  price: 499,  cost: 260 },
-  { id: "SKU-1005", name: "Çorap 3'lü Paket",     category: "Aksesuar",     stock: 75, reorderPoint: 30, location: "Depo-2", incoming: 0,  price: 129,  cost: 60  },
-];
-
-
-const CATEGORIES = ["Ayakkabı", "Omuz Çantası", "Okul Çantası", "Eşofman", "Aksesuar"];
-
-
-export default function App() {
-  const [query, setQuery] = useState("");
-  const [category, setCategory] = useState("Hepsi");
-  const [onlyLow, setOnlyLow] = useState(false);
-  const [items, setItems] = useState(MOCK_ITEMS);
-
-  // Sidebar menüsü
-  const NAV_ITEMS = [
-    { icon: FileBarChart2, label: "Dashboard",     key: "dashboard" },
-    { icon: Layers,       label: "Ürünler",       key: "products"  },
-    { icon: Plus,         label: "Ürün Ekle",     key: "create"    },
-    { icon: PackageCheck, label: "Stok Güncelle", key: "stock"     },
-    { icon: FileBarChart2,label: "Raporlar",      key: "reports"   },
-    { icon: Settings,     label: "Ayarlar",       key: "settings"  },
-  ];
+function App() {
   const [active, setActive] = useState("dashboard");
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  // Ürün Ekle modalı & formu
-  const [addOpen, setAddOpen] = useState(false);
-  const [form, setForm] = useState({
+  // Arama/filtre state'leri
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("Hepsi");
+  const [showOnlyLowStock, setShowOnlyLowStock] = useState(false);
+
+  // Modal state'leri
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isFiltersModalOpen, setIsFiltersModalOpen] = useState(false);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [isStockModalOpen, setIsStockModalOpen] = useState(false);
+
+  // Stok güncelleme için state'ler
+  const [selectedProductForStock, setSelectedProductForStock] = useState("");
+  const [stockDelta, setStockDelta] = useState("");
+  const [stockNote, setStockNote] = useState("");
+
+  // Form state'leri
+  const [newProduct, setNewProduct] = useState({
     name: "",
-    category: "Aksesuar",
-    location: "Depo-1",
-    unit: "adet",
-    stock: 0,
-    reorderPoint: 10,
-    price: 0,
-    cost: 0,
-    barcode: ""
+    category: "",
+    cost: "",
+    price: "",
+    stock: "",
+    reorderPoint: "",
+    location: "",
+    unit: "Adet",
+    barcode: "",
   });
-  const [errors, setErrors] = useState({});
 
-  function validate() {
-    const e = {};
-    if (!form.name.trim()) e.name = "Ürün adı gerekli";
-    if (!form.category) e.category = "Kategori gerekli";
-    if (!form.location) e.location = "Lokasyon gerekli";
-    if (form.stock < 0) e.stock = "Stok negatif olamaz";
-    if (form.reorderPoint < 0) e.reorderPoint = "ROP negatif olamaz";
-    if (form.price < 0) e.price = "Fiyat negatif olamaz";
-    if (form.cost < 0) e.cost = "Maliyet negatif olamaz";
-    return e;
-  }
-
-  function handleAddSubmit() {
-    const e = validate();
-    setErrors(e);
-    if (Object.keys(e).length) return;
-
-    // Benzersiz SKU türet
-    const base = form.name.replace(/[^A-Z0-9]/gi, "").toUpperCase().slice(0, 6) || "SKU";
-    let idx = 1; 
-    let sku = `${base}-${String(items.length + idx).padStart(4, "0")}`;
-    while (items.some(i => i.id === sku)) { 
-      idx++; 
-      sku = `${base}-${String(items.length + idx).padStart(4, "0")}`; 
+  // Veri yükleme
+  const loadProducts = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const products = await listProducts(searchTerm, selectedCategory, showOnlyLowStock);
+      setItems(products);
+    } catch (err) {
+      setError(err.message);
+      console.error("Ürünler yüklenirken hata:", err);
+    } finally {
+      setLoading(false);
     }
+  };
 
-    const newItem = {
-      id: sku,
-      name: form.name.trim(),
-      category: form.category,
-      location: form.location,
-      unit: form.unit,
-      stock: Number(form.stock) || 0,
-      reorderPoint: Number(form.reorderPoint) || 0,
-      price: Number(form.price) || 0,
-      cost: Number(form.cost) || 0,
-      incoming: 0,
-      barcode: form.barcode,
-      createdAt: new Date().toISOString(),
-    };
+  // İlk yükleme
+  useEffect(() => {
+    loadProducts();
+  }, []);
 
-    setItems(prev => [newItem, ...prev]);
-    setAddOpen(false);
-    setForm({ name: "", category: "Aksesuar", location: "Depo-1", unit: "adet", stock: 0, reorderPoint: 10, price: 0, cost: 0, barcode: "" });
-  }
+  // Arama/filtre değişikliklerinde yeniden yükle
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      loadProducts();
+    }, 300); // Debounce
 
-  // Çıkış işlemi
-  function handleExit() {
-    try { localStorage.clear(); sessionStorage.clear(); } catch(e) {}
-    if (window?.electron?.quitApp) { window.electron.quitApp(); return; }
-    if (window?.electronAPI?.quit) { window.electronAPI.quit(); return; }
-    window.open('', '_self');
-    window.close();
-    window.location.replace('about:blank');
-  }
+    return () => clearTimeout(timeoutId);
+  }, [searchTerm, selectedCategory, showOnlyLowStock]);
 
-  const filtered = useMemo(() => {
-    return items.filter((it) => {
-      const matchQuery = [it.id, it.name, it.category, it.location].some((f) =>
-        f.toLowerCase().includes(query.toLowerCase())
-      );
-      const matchCat = category === "Hepsi" || it.category === category;
-      const matchLow = !onlyLow || it.stock <= it.reorderPoint;
-      return matchQuery && matchCat && matchLow;
-    });
-  }, [items, query, category, onlyLow]);
-
-  const totalSku = items.length;
-  const totalStock = items.reduce((s, i) => s + i.stock, 0);
-  const lowStock = items.filter((i) => i.stock > 0 && i.stock <= i.reorderPoint).length;
-  const outStock = items.filter((i) => i.stock === 0).length;
-  const totalValue = items.reduce((s, i) => s + i.stock * (i.cost ?? i.price ?? 0), 0);
-
-  const chartData = useMemo(() => {
-    return CATEGORIES.map((c) => {
-      const inCat = items.filter((i) => i.category === c);
-      const total = inCat.reduce((s, i) => s + i.stock, 0);
-      const need = inCat.reduce((s, i) => s + Math.max(0, i.reorderPoint - i.stock), 0);
-      return { category: c, Stok: total, "Eksik (İhtiyaç)": need };
-    });
+  // Kategoriler (dinamik)
+  const categories = useMemo(() => {
+    const cats = ["Hepsi", ...new Set(items.map(item => item.category).filter(Boolean))];
+    return cats;
   }, [items]);
 
-  function exportCSV() {
-    const header = ["id", "name", "category", "stock", "reorderPoint", "location", "incoming", "price", "cost"].join(",");
-    const rows = items
-      .map((i) => [i.id, i.name, i.category, i.stock, i.reorderPoint, i.location, i.incoming, i.price ?? "", i.cost ?? ""].join(","))
-      .join("\n");
-    const csv = header + "\n" + rows;
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "stoklar.csv";
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+  // Ürün ekleme
+  const handleAddSubmit = async (e) => {
+    e.preventDefault();
+    
+    try {
+      const productData = {
+        ...newProduct,
+        cost: parseFloat(newProduct.cost) || 0,
+        price: parseFloat(newProduct.price) || 0,
+        stock: parseInt(newProduct.stock) || 0,
+        reorderPoint: parseInt(newProduct.reorderPoint) || 0,
+      };
 
-  return (
-    <div className="app">
-      {/* SIDEBAR */}
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand__icon"><Warehouse className="icon" /></div>
-          <div className="brand__title">Stok Takip</div>
-        </div>
-        <nav className="nav">
-          {NAV_ITEMS.map((m) => (
-            <button
-              key={m.key}
-              className={`nav-item ${active === m.key ? "nav-item--active" : ""}`}
-              onClick={() => {
-                if (m.key === "create") { setAddOpen(true); return; }
-                setActive(m.key);
-              }}
-            >
-              <m.icon className="icon" />
-              <span>{m.label}</span>
-            </button>
-          ))}
-        </nav>
-        <div className="sidebar__footer">v1.0.0</div>
-      </aside>
+      await createProduct(productData);
+      
+      // Başarı durumunda modal'ı kapat ve listeyi yenile
+      setIsAddModalOpen(false);
+      setNewProduct({
+        name: "",
+        category: "",
+        cost: "",
+        price: "",
+        stock: "",
+        reorderPoint: "",
+        location: "",
+        unit: "Adet",
+        barcode: "",
+      });
+      await loadProducts();
+    } catch (error) {
+      console.error("Ürün eklenirken hata:", error);
+      alert("Ürün eklenirken hata oluştu: " + error.message);
+    }
+  };
 
-      {/* TOP NAVBAR */}
-      <header className="navbar">
-        <div className="navbar__title">Stok Takip Sistemi</div>
-        <div className="navbar__right">
-          <div className="badge">Admin</div>
-          {/* Üstte ekstra \"Yeni Ürün\" butonu vermiyoruz; sidebar'dan açılıyor */}
-          <Button variant="primary" className="inline-flex gap-2" onClick={handleExit}>
-            <LogOut className="icon" /> Çıkış
-          </Button>
-        </div>
-      </header>
+  // Stok güncelleme
+  const handleStockUpdate = async (e) => {
+    e.preventDefault();
+    
+    if (!selectedProductForStock || !stockDelta) {
+      alert("Lütfen ürün ve miktar seçin");
+      return;
+    }
 
-      {/* MAIN */}
-      <main className="main">
-        <div className="container">
-          {/* FİLTRE BAR */}
-          <Card>
-            <div className="filter-bar">
-              <div className="search">
-                <Search className="icon search__icon" />
-                <input className="input search__input" placeholder="SKU, ürün adı, kategori, lokasyon ara..." value={query} onChange={(e) => setQuery(e.target.value)} />
-              </div>
-              <div className="filter-actions">
-                <select className="input select" value={category} onChange={(e) => setCategory(e.target.value)}>
-                  <option>Hepsi</option>
-                  {CATEGORIES.map((c) => (
-                    <option key={c}>{c}</option>
-                  ))}
-                </select>
-                <label className="checkbox">
-                  <input type="checkbox" checked={onlyLow} onChange={(e) => setOnlyLow(e.target.checked)} />
-                  <span>Sadece kritik stok</span>
-                </label>
-                <Button className="inline-flex gap-2"><Filter className="icon" /> Gelişmiş Filtreler</Button>
-                <Button className="inline-flex gap-2" onClick={exportCSV}><Download className="icon" /> Dışa Aktar</Button>
-              </div>
+    try {
+      const delta = parseInt(stockDelta);
+      if (isNaN(delta)) {
+        alert("Geçerli bir miktar girin");
+        return;
+      }
+
+      await patchProductStock(selectedProductForStock, {
+        delta: delta,
+        note: stockNote || undefined
+      });
+
+      // Başarı durumunda modal'ı kapat ve listeyi yenile
+      setIsStockModalOpen(false);
+      setSelectedProductForStock("");
+      setStockDelta("");
+      setStockNote("");
+      await loadProducts();
+    } catch (error) {
+      console.error("Stok güncellenirken hata:", error);
+      alert("Stok güncellenirken hata oluştu: " + error.message);
+    }
+  };
+
+  // Ürün silme
+  const handleDeleteProduct = async (productId) => {
+    if (!confirm("Bu ürünü silmek istediğinizden emin misiniz?")) {
+      return;
+    }
+
+    try {
+      await deleteProduct(productId);
+      await loadProducts(); // Listeyi yenile
+    } catch (error) {
+      console.error("Ürün silinirken hata:", error);
+      alert("Ürün silinirken hata oluştu: " + error.message);
+    }
+  };
+
+  // Hesaplanan değerler
+  const totalProducts = items.length;
+  const totalStock = items.reduce((sum, item) => sum + (item.stock || 0), 0);
+  const lowStockItems = items.filter(item => item.stock <= (item.reorderPoint || 0));
+  const criticalStockItems = items.filter(item => item.stock === 0);
+  const totalValue = items.reduce((sum, item) => sum + (item.cost || 0) * (item.stock || 0), 0);
+
+  // Grafik verisi
+  const chartData = useMemo(() => {
+    const categoryData = {};
+    items.forEach(item => {
+      const cat = item.category || "Diğer";
+      if (!categoryData[cat]) {
+        categoryData[cat] = { category: cat, stok: 0, ihtiyac: 0 };
+      }
+      categoryData[cat].stok += item.stock || 0;
+      categoryData[cat].ihtiyac += Math.max(0, (item.reorderPoint || 0) - (item.stock || 0));
+    });
+    return Object.values(categoryData);
+  }, [items]);
+
+  const renderContent = () => {
+    if (active === "dashboard") {
+      return (
+        <div className="content">
+          <div className="page-header">
+            <h1 className="page-title">Dashboard</h1>
+            <div className="page-actions">
+              <Button onClick={() => setIsStockModalOpen(true)}>
+                <Upload className="icon" />
+                Stok Güncelle
+              </Button>
+              <Button onClick={() => setIsAddModalOpen(true)}>
+                <Plus className="icon" />
+                Yeni Ürün Ekle
+              </Button>
             </div>
-          </Card>
+          </div>
 
-          {/* İSTATİSTİK KARTLARI */}
-          <section className="stats-grid">
-            <Card><Stat icon={Box} label="Toplam Ürün" value={totalSku} sub="↑ %12" /></Card>
-            <Card><Stat icon={ShoppingCart} label="Toplam Stok" value={totalStock} sub="↑ %8" /></Card>
-            <Card><Stat icon={AlertTriangle} label="Düşük Stok" value={lowStock + outStock} sub={`kritik: ${lowStock}, stoksuz: ${outStock}`} /></Card>
-            <Card><Stat icon={FileBarChart2} label="Toplam Değer" value={`₺${totalValue.toLocaleString("tr-TR")}`} sub="Maliyet esaslı" /></Card>
-          </section>
+          {loading && <div className="loading">Yükleniyor...</div>}
+          {error && <div className="error">Hata: {error}</div>}
 
-          {/* UYARILAR & SON EKLENENLER & GRAFİK */}
-          <section className="grid-3">
+          <div className="stats">
             <Card>
-              <CardHeader title="Düşük Stok Uyarıları" />
-              <div className="card__body">
-                {items.filter((i) => i.stock <= i.reorderPoint).length === 0 ? (
-                  <div className="empty">Tüm ürünlerde yeterli stok bulunuyor!</div>
-                ) : (
-                  <ul className="list">
-                    {items
-                      .filter((i) => i.stock <= i.reorderPoint)
-                      .map((i) => (
-                        <li key={i.id} className="list__item">
-                          <div>
-                            <div className="list__title">{i.name}</div>
-                            <div className="muted">{i.id} • ROP: {i.reorderPoint} • Stok: {i.stock}</div>
-                          </div>
-                          {i.incoming > 0 ? (
-                            <span className="chip chip--soft">Yolda: {i.incoming}</span>
-                          ) : (
-                            <span className="chip chip--danger">Sipariş gerekli</span>
-                          )}
-                        </li>
-                      ))}
-                  </ul>
-                )}
+              <div className="stat">
+                <div className="stat__icon stat__icon--primary">
+                  <Box className="icon" />
+                </div>
+                <div className="stat__data">
+                  <div className="stat__value">{totalProducts}</div>
+                  <div className="stat__label">Toplam Ürün</div>
+                </div>
               </div>
             </Card>
 
+            <Card>
+              <div className="stat">
+                <div className="stat__icon stat__icon--success">
+                  <PackageCheck className="icon" />
+                </div>
+                <div className="stat__data">
+                  <div className="stat__value">{totalStock}</div>
+                  <div className="stat__label">Toplam Stok</div>
+                </div>
+              </div>
+            </Card>
+
+            <Card>
+              <div className="stat">
+                <div className="stat__icon stat__icon--warning">
+                  <AlertTriangle className="icon" />
+                </div>
+                <div className="stat__data">
+                  <div className="stat__value">{lowStockItems.length}</div>
+                  <div className="stat__label">Düşük Stok</div>
+                </div>
+              </div>
+            </Card>
+
+            <Card>
+              <div className="stat">
+                <div className="stat__icon stat__icon--danger">
+                  <PackageX className="icon" />
+                </div>
+                <div className="stat__data">
+                  <div className="stat__value">{criticalStockItems.length}</div>
+                  <div className="stat__label">Kritik Stok</div>
+                </div>
+              </div>
+            </Card>
+
+            <Card>
+              <div className="stat">
+                <div className="stat__icon stat__icon--info">
+                  <ShoppingCart className="icon" />
+                </div>
+                <div className="stat__data">
+                  <div className="stat__value">₺{totalValue.toLocaleString("tr-TR")}</div>
+                  <div className="stat__label">Toplam Değer</div>
+                </div>
+              </div>
+            </Card>
+          </div>
+
+          <div className="grid">
             <Card>
               <CardHeader title="Son Eklenen Ürünler" />
               <div className="card__body">
@@ -343,119 +365,618 @@ export default function App() {
                     </li>
                   ))}
                 </ul>
-                <div className="link">Tüm ürünleri görüntüle →</div>
+                <button 
+                  className="link" 
+                  onClick={() => setActive('products')}
+                  style={{background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)'}}
+                >
+                  Tüm ürünleri görüntüle →
+                </button>
               </div>
             </Card>
 
             <Card>
               <CardHeader title="Kategori Bazlı Stok & İhtiyaç" />
               <div className="chart">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData}>
+                <ResponsiveContainer width="100%" height={250}>
+                  <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="category" />
                     <YAxis />
                     <Tooltip />
-                    <ReferenceLine y={0} />
-                    <Bar dataKey="Stok" fill="#ff6a00" />
-                    <Bar dataKey="Eksik (İhtiyaç)" fill="#94a3b8" />
+                    <Bar dataKey="stok" fill="var(--primary)" name="Mevcut Stok" />
+                    <Bar dataKey="ihtiyac" fill="var(--danger)" name="İhtiyaç" />
+                    <ReferenceLine y={0} stroke="#000" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             </Card>
-          </section>
+          </div>
 
-          {/* HIZLI İŞLEMLER */}
-          <section className="quick-actions">
-            {[{title: "Yeni Ürün Ekle", desc: "Stok sistemine yeni ürün ekleyin", icon: Plus}, {title: "Stok Güncelle", desc: "Mevcut stok miktarlarını güncelleyin", icon: PackageCheck}, {title: "Raporları Görüntüle", desc: "Detaylı stok raporlarını inceleyin", icon: FileBarChart2}].map(({title, desc, icon: I}, idx) => (
-              <Card key={title}>
-                <button className={`quick ${idx===0 ? "quick--accent" : ""}`} onClick={() => idx===0 ? setAddOpen(true) : null}>
-                  <div className="quick__icon"><I className="icon" /></div>
-                  <div>
-                    <div className="quick__title">{title}</div>
-                    <div className="muted">{desc}</div>
-                  </div>
-                </button>
-              </Card>
-            ))}
-          </section>
+          {lowStockItems.length > 0 && (
+            <Card>
+              <CardHeader title="Dikkat Edilmesi Gereken Ürünler" />
+              <div className="card__body">
+                <div className="alerts">
+                  {lowStockItems.slice(0, 5).map((item) => (
+                    <div key={item.id} className="alert alert--warning">
+                      <AlertTriangle className="icon" />
+                      <div>
+                        <strong>{item.name}</strong> - Stok: {item.stock}, Minimum: {item.reorderPoint}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </Card>
+          )}
+        </div>
+      );
+    }
+
+    if (active === "products") {
+      return (
+        <div className="content">
+          <div className="page-header">
+            <h1 className="page-title">Ürünler</h1>
+            <div className="page-actions">
+              <Button variant="outline" onClick={() => setIsFiltersModalOpen(true)}>
+                <Filter className="icon" />
+                Gelişmiş Filtreler
+              </Button>
+              <Button variant="outline" onClick={() => setIsExportModalOpen(true)}>
+                <Download className="icon" />
+                CSV Dışa Aktar
+              </Button>
+              <Button onClick={() => setIsAddModalOpen(true)}>
+                <Plus className="icon" />
+                Yeni Ürün Ekle
+              </Button>
+            </div>
+          </div>
+
+          <div className="filters">
+            <div className="filter-group">
+              <div className="search-box">
+                <Search className="icon" />
+                <input
+                  type="text"
+                  placeholder="Ürün ara (ID, isim, kategori, lokasyon...)"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="input"
+                />
+              </div>
+            </div>
+            
+            <div className="filter-group">
+              <select
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                className="select"
+              >
+                {categories.map((cat) => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="filter-group">
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={showOnlyLowStock}
+                  onChange={(e) => setShowOnlyLowStock(e.target.checked)}
+                />
+                <span>Sadece kritik stok</span>
+              </label>
+            </div>
+          </div>
+
+          {loading && <div className="loading">Yükleniyor...</div>}
+          {error && <div className="error">Hata: {error}</div>}
+
+          <Card>
+            <div className="table-container">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Ürün Adı</th>
+                    <th>Kategori</th>
+                    <th>Stok</th>
+                    <th>Min. Stok</th>
+                    <th>Maliyet</th>
+                    <th>Fiyat</th>
+                    <th>Lokasyon</th>
+                    <th>İşlemler</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((item) => (
+                    <tr key={item.id}>
+                      <td>{item.id}</td>
+                      <td>{item.name}</td>
+                      <td>{item.category}</td>
+                      <td>
+                        <span className={item.stock <= item.reorderPoint ? "text-danger" : ""}>
+                          {item.stock}
+                        </span>
+                      </td>
+                      <td>{item.reorderPoint}</td>
+                      <td>₺{item.cost?.toLocaleString("tr-TR")}</td>
+                      <td>₺{item.price?.toLocaleString("tr-TR")}</td>
+                      <td>{item.location}</td>
+                      <td>
+                        <div className="action-buttons">
+                          <Button size="sm" onClick={() => {
+                            setSelectedProductForStock(item.id);
+                            setIsStockModalOpen(true);
+                          }}>
+                            Stok
+                          </Button>
+                          <Button size="sm" variant="danger" onClick={() => handleDeleteProduct(item.id)}>
+                            Sil
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </div>
+      );
+    }
+
+    if (active === "reports") {
+      return (
+        <div className="content">
+          <div className="page-header">
+            <h1 className="page-title">Raporlar</h1>
+          </div>
+
+          <div className="reports-grid">
+            <Card>
+              <div className="report-item">
+                <h3>Stok Raporu</h3>
+                <p>Detaylı stok analizi ve trends</p>
+                <Button variant="outline">Raporu Görüntüle</Button>
+              </div>
+            </Card>
+
+            <Card>
+              <div className="report-item">
+                <h3>Satış Raporu</h3>
+                <p>Satış performansı ve gelir analizi</p>
+                <Button variant="outline">Raporu Görüntüle</Button>
+              </div>
+            </Card>
+
+            <Card>
+              <div className="report-item">
+                <h3>Kategori Analizi</h3>
+                <p>Kategori bazlı performans metrikleri</p>
+                <Button variant="outline">Raporu Görüntüle</Button>
+              </div>
+            </Card>
+
+            <Card>
+              <div className="report-item">
+                <h3>Kritik Stok Raporu</h3>
+                <p>Düşük stok ve yeniden sipariş önerileri</p>
+                <Button variant="outline">Raporu Görüntüle</Button>
+              </div>
+            </Card>
+          </div>
+        </div>
+      );
+    }
+
+    if (active === "settings") {
+      return (
+        <div className="content">
+          <div className="page-header">
+            <h1 className="page-title">Ayarlar</h1>
+          </div>
+
+          <Card>
+            <CardHeader title="Genel Ayarlar" />
+            <div className="card__body">
+              <div className="settings-list">
+                <div className="setting-item">
+                  <label>Şirket Adı</label>
+                  <input type="text" className="input" placeholder="Şirket adını girin" />
+                </div>
+                
+                <div className="setting-item">
+                  <label>Para Birimi</label>
+                  <select className="select">
+                    <option>TRY (₺)</option>
+                    <option>USD ($)</option>
+                    <option>EUR (€)</option>
+                  </select>
+                </div>
+                
+                <div className="setting-item">
+                  <label>Kritik Stok Uyarı Eşiği</label>
+                  <input type="number" className="input" placeholder="Varsayılan minimum stok" />
+                </div>
+                
+                <div className="setting-item">
+                  <label>Otomatik Yedekleme</label>
+                  <label className="checkbox">
+                    <input type="checkbox" />
+                    <span>Günlük otomatik yedekleme aktif</span>
+                  </label>
+                </div>
+              </div>
+              
+              <div style={{marginTop: '20px'}}>
+                <Button>Ayarları Kaydet</Button>
+              </div>
+            </div>
+          </Card>
+        </div>
+      );
+    }
+
+    return <div className="content">Sayfa bulunamadı</div>;
+  };
+
+  return (
+    <div className="app">
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand__icon">
+            <Warehouse className="icon" />
+          </div>
+          <div className="brand__title">Stok Takip</div>
         </div>
 
-        {/* ÜRÜN EKLE MODAL */}
-        <Modal
-          title="Yeni Ürün Ekle"
-          open={addOpen}
-          onClose={() => setAddOpen(false)}
-          footer={
-            <div className="modal__actions">
-              <Button onClick={() => setAddOpen(false)}>Vazgeç</Button>
-              <Button variant="primary" onClick={handleAddSubmit}>Kaydet</Button>
-            </div>
-          }
-        >
-          <div className="form-grid">
-            <label className="form-row">
-              <span>Ürün Adı</span>
-              <input className={`input ${errors.name ? "input--error" : ""}`} value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
-              {errors.name && <div className="error">{errors.name}</div>}
-            </label>
+        <nav className="nav">
+          <button 
+            className={`nav__item ${active === "dashboard" ? "nav__item--active" : ""}`}
+            onClick={() => setActive("dashboard")}
+          >
+            <Layers className="icon" />
+            <span>Dashboard</span>
+          </button>
+          <button 
+            className={`nav__item ${active === "products" ? "nav__item--active" : ""}`}
+            onClick={() => setActive("products")}
+          >
+            <Box className="icon" />
+            <span>Ürünler</span>
+          </button>
+          <button 
+            className={`nav__item ${active === "reports" ? "nav__item--active" : ""}`}
+            onClick={() => setActive("reports")}
+          >
+            <FileBarChart2 className="icon" />
+            <span>Raporlar</span>
+          </button>
+          <button 
+            className={`nav__item ${active === "settings" ? "nav__item--active" : ""}`}
+            onClick={() => setActive("settings")}
+          >
+            <Settings className="icon" />
+            <span>Ayarlar</span>
+          </button>
+        </nav>
 
-            <label className="form-row">
-              <span>Kategori</span>
-              <select className="input" value={form.category} onChange={e => setForm({...form, category: e.target.value})}>
-                {CATEGORIES.map(c => <option key={c}>{c}</option>)}
-              </select>
-            </label>
+        <div className="sidebar__footer">
+          <button className="nav__item">
+            <LogOut className="icon" />
+            <span>Çıkış</span>
+          </button>
+        </div>
+      </aside>
 
-            <label className="form-row">
-              <span>Lokasyon</span>
-              <select className="input" value={form.location} onChange={e => setForm({...form, location: e.target.value})}>
-                <option>Depo-1</option>
-                <option>Depo-2</option>
-                <option>Depo-3</option>
-              </select>
-            </label>
-
-            <label className="form-row">
-              <span>Birim</span>
-              <select className="input" value={form.unit} onChange={e => setForm({...form, unit: e.target.value})}>
-                <option>adet</option>
-                <option>kutu</option>
-                <option>paket</option>
-              </select>
-            </label>
-
-            <label className="form-row">
-              <span>Başlangıç Stok</span>
-              <input type="number" className={`input ${errors.stock ? "input--error" : ""}`} value={form.stock} onChange={e => setForm({...form, stock: e.target.value})} />
-              {errors.stock && <div className="error">{errors.stock}</div>}
-            </label>
-
-            <label className="form-row">
-              <span>ROP</span>
-              <input type="number" className={`input ${errors.reorderPoint ? "input--error" : ""}`} value={form.reorderPoint} onChange={e => setForm({...form, reorderPoint: e.target.value})} />
-              {errors.reorderPoint && <div className="error">{errors.reorderPoint}</div>}
-            </label>
-
-            <label className="form-row">
-              <span>Satış Fiyatı (₺)</span>
-              <input type="number" className={`input ${errors.price ? "input--error" : ""}`} value={form.price} onChange={e => setForm({...form, price: e.target.value})} />
-              {errors.price && <div className="error">{errors.price}</div>}
-            </label>
-
-            <label className="form-row">
-              <span>Maliyet (₺)</span>
-              <input type="number" className={`input ${errors.cost ? "input--error" : ""}`} value={form.cost} onChange={e => setForm({...form, cost: e.target.value})} />
-              {errors.cost && <div className="error">{errors.cost}</div>}
-            </label>
-
-            <label className="form-row form-row--full">
-              <span>Barkod / SKU Notu</span>
-              <input className="input" value={form.barcode} onChange={e => setForm({...form, barcode: e.target.value})} placeholder="Barkod veya kısa not" />
-            </label>
-          </div>
-        </Modal>
+      <main className="main">
+        {renderContent()}
       </main>
+
+      {/* Ürün Ekleme Modalı */}
+      <Modal
+        title="Yeni Ürün Ekle"
+        open={isAddModalOpen}
+        onClose={() => setIsAddModalOpen(false)}
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setIsAddModalOpen(false)}>
+              İptal
+            </Button>
+            <Button onClick={handleAddSubmit}>
+              Ürün Ekle
+            </Button>
+          </>
+        }
+      >
+        <form onSubmit={handleAddSubmit}>
+          <div className="form">
+            <div className="form-row">
+              <div className="form-group">
+                <label>Ürün Adı *</label>
+                <input
+                  type="text"
+                  className="input"
+                  value={newProduct.name}
+                  onChange={(e) => setNewProduct(prev => ({ ...prev, name: e.target.value }))}
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label>Kategori *</label>
+                <input
+                  type="text"
+                  className="input"
+                  value={newProduct.category}
+                  onChange={(e) => setNewProduct(prev => ({ ...prev, category: e.target.value }))}
+                  required
+                />
+              </div>
+            </div>
+            
+            <div className="form-row">
+              <div className="form-group">
+                <label>Maliyet</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  className="input"
+                  value={newProduct.cost}
+                  onChange={(e) => setNewProduct(prev => ({ ...prev, cost: e.target.value }))}
+                />
+              </div>
+              <div className="form-group">
+                <label>Satış Fiyatı</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  className="input"
+                  value={newProduct.price}
+                  onChange={(e) => setNewProduct(prev => ({ ...prev, price: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group">
+                <label>Başlangıç Stok</label>
+                <input
+                  type="number"
+                  className="input"
+                  value={newProduct.stock}
+                  onChange={(e) => setNewProduct(prev => ({ ...prev, stock: e.target.value }))}
+                />
+              </div>
+              <div className="form-group">
+                <label>Minimum Stok</label>
+                <input
+                  type="number"
+                  className="input"
+                  value={newProduct.reorderPoint}
+                  onChange={(e) => setNewProduct(prev => ({ ...prev, reorderPoint: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group">
+                <label>Lokasyon</label>
+                <input
+                  type="text"
+                  className="input"
+                  value={newProduct.location}
+                  onChange={(e) => setNewProduct(prev => ({ ...prev, location: e.target.value }))}
+                />
+              </div>
+              <div className="form-group">
+                <label>Birim</label>
+                <select
+                  className="select"
+                  value={newProduct.unit}
+                  onChange={(e) => setNewProduct(prev => ({ ...prev, unit: e.target.value }))}
+                >
+                  <option value="Adet">Adet</option>
+                  <option value="Kg">Kg</option>
+                  <option value="Lt">Lt</option>
+                  <option value="M">M</option>
+                  <option value="Kutu">Kutu</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label>Barkod</label>
+              <input
+                type="text"
+                className="input"
+                value={newProduct.barcode}
+                onChange={(e) => setNewProduct(prev => ({ ...prev, barcode: e.target.value }))}
+              />
+            </div>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Stok Güncelle Modalı */}
+      <Modal
+        title="Stok Güncelle"
+        open={isStockModalOpen}
+        onClose={() => setIsStockModalOpen(false)}
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setIsStockModalOpen(false)}>
+              İptal
+            </Button>
+            <Button onClick={handleStockUpdate}>
+              Güncelle
+            </Button>
+          </>
+        }
+      >
+        <form onSubmit={handleStockUpdate}>
+          <div className="form">
+            <div className="form-group">
+              <label>Ürün Seçin *</label>
+              <select
+                className="select"
+                value={selectedProductForStock}
+                onChange={(e) => setSelectedProductForStock(e.target.value)}
+                required
+              >
+                <option value="">-- Ürün seçin --</option>
+                {items.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name} (Mevcut: {item.stock})
+                  </option>
+                ))}
+              </select>
+            </div>
+            
+            <div className="form-group">
+              <label>Stok Değişikliği *</label>
+              <input
+                type="number"
+                className="input"
+                value={stockDelta}
+                onChange={(e) => setStockDelta(e.target.value)}
+                placeholder="Örn: +10 (artış) veya -5 (azalış)"
+                required
+              />
+              <small className="help-text">Pozitif sayı stok artışı, negatif sayı stok azalışı</small>
+            </div>
+            
+            <div className="form-group">
+              <label>Not</label>
+              <textarea
+                className="textarea"
+                value={stockNote}
+                onChange={(e) => setStockNote(e.target.value)}
+                placeholder="Stok hareketi için not (opsiyonel)"
+                rows="3"
+              />
+            </div>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Gelişmiş Filtreler Modalı */}
+      <Modal
+        title="Gelişmiş Filtreler"
+        open={isFiltersModalOpen}
+        onClose={() => setIsFiltersModalOpen(false)}
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setIsFiltersModalOpen(false)}>
+              İptal
+            </Button>
+            <Button onClick={() => setIsFiltersModalOpen(false)}>
+              Filtreleri Uygula
+            </Button>
+          </>
+        }
+      >
+        <div className="form">
+          <div className="form-group">
+            <label>Fiyat Aralığı</label>
+            <div className="form-row">
+              <input type="number" className="input" placeholder="Min fiyat" />
+              <input type="number" className="input" placeholder="Max fiyat" />
+            </div>
+          </div>
+          
+          <div className="form-group">
+            <label>Stok Aralığı</label>
+            <div className="form-row">
+              <input type="number" className="input" placeholder="Min stok" />
+              <input type="number" className="input" placeholder="Max stok" />
+            </div>
+          </div>
+          
+          <div className="form-group">
+            <label>Lokasyon</label>
+            <input type="text" className="input" placeholder="Lokasyon ara" />
+          </div>
+          
+          <div className="form-group">
+            <label>Özel Durumlar</label>
+            <div className="checkbox-group">
+              <label className="checkbox">
+                <input type="checkbox" />
+                <span>Sadece stoğu bitmiş ürünler</span>
+              </label>
+              <label className="checkbox">
+                <input type="checkbox" />
+                <span>Sadece kritik stok seviyesindeki ürünler</span>
+              </label>
+              <label className="checkbox">
+                <input type="checkbox" />
+                <span>Sadece yeni eklenen ürünler (son 7 gün)</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </Modal>
+
+      {/* CSV Dışa Aktar Modalı */}
+      <Modal
+        title="CSV Dışa Aktar"
+        open={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setIsExportModalOpen(false)}>
+              İptal
+            </Button>
+            <Button onClick={() => {
+              // CSV export logic burada olacak
+              alert("CSV dışa aktarma özelliği yakında eklenecek!");
+              setIsExportModalOpen(false);
+            }}>
+              Dışa Aktar
+            </Button>
+          </>
+        }
+      >
+        <div className="form">
+          <div className="form-group">
+            <label>Dışa aktarılacak veriler</label>
+            <div className="checkbox-group">
+              <label className="checkbox">
+                <input type="checkbox" defaultChecked />
+                <span>Tüm ürün bilgileri</span>
+              </label>
+              <label className="checkbox">
+                <input type="checkbox" defaultChecked />
+                <span>Stok seviyeleri</span>
+              </label>
+              <label className="checkbox">
+                <input type="checkbox" />
+                <span>Fiyat bilgileri</span>
+              </label>
+              <label className="checkbox">
+                <input type="checkbox" />
+                <span>Lokasyon bilgileri</span>
+              </label>
+            </div>
+          </div>
+          
+          <div className="form-group">
+            <label>Dosya formatı</label>
+            <select className="select">
+              <option>CSV (Excel uyumlu)</option>
+              <option>CSV (UTF-8)</option>
+              <option>Tab-separated values</option>
+            </select>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
+
+export default App;
